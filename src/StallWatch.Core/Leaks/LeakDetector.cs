@@ -67,7 +67,7 @@ public sealed class LeakDetector(LeakDetectorOptions options)
         var who = $"{s.Name} (pid {s.Pid})";
 
         if (s.Handles >= options.HandleCountAlarm && h.Reported.Add("handles-absolute"))
-            Raise(now, $"{who} holds {s.Handles.ToString("N0", CultureInfo.InvariantCulture)} handles. Normal programs hold hundreds to a few thousand; " +
+            Raise(now, s.Name, $"{who} holds {s.Handles.ToString("N0", CultureInfo.InvariantCulture)} handles. Normal programs hold hundreds to a few thousand; " +
                        "this many slows down every tool that lists processes (Task Manager, Resource Monitor) " +
                        "and eats kernel memory. Restarting or disabling that program releases them.");
 
@@ -90,7 +90,7 @@ public sealed class LeakDetector(LeakDetectorOptions options)
 
             h.Reported.Add(key + "-growth");
             var minutes = pts[^1].Item1;
-            Raise(now, $"{who} keeps growing its {unit}: +{growth:F0} in {minutes:F0} min (about {slope:F0} per minute, " +
+            Raise(now, s.Name, $"{who} keeps growing its {unit}: +{growth:F0} in {minutes:F0} min (about {slope:F0} per minute, " +
                        $"now {pts[^1].Item2:F0}). Steady growth like this is a leak and will slow the system over time.");
         }
     }
@@ -103,6 +103,6 @@ public sealed class LeakDetector(LeakDetectorOptions options)
         return d == 0 ? 0 : (n * sxy - sx * sy) / d;
     }
 
-    void Raise(DateTime now, string summary) =>
-        FindingRaised?.Invoke(new Finding(now, FindingKind.ResourceLeak, summary, []));
+    void Raise(DateTime now, string process, string summary) =>
+        FindingRaised?.Invoke(new Finding(now, FindingKind.ResourceLeak, summary, [], process));
 }

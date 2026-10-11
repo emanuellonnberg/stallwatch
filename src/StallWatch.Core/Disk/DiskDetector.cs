@@ -194,7 +194,7 @@ public sealed class DiskDetector(DiskDetectorOptions options)
             .Select(p => $"{p.Name}: {p.Flushes} flushes, {p.Writes} writes, {p.Reads} reads that second" +
                          (p.Files.Count == 0 ? "" : $" (mostly {p.Files.MaxBy(kv => kv.Value).Key})"))
             .ToList();
-        return new Finding(slow.Time, FindingKind.DiskStall, summary, busy);
+        return new Finding(slow.Time, FindingKind.DiskStall, summary, busy, slow.ProcessName);
     }
 
     Finding StormFinding(DateTime start, StormState s)
@@ -206,6 +206,6 @@ public sealed class DiskDetector(DiskDetectorOptions options)
                       "of random freezes in other programs using the same drive.";
         var evidence = s.Files.OrderByDescending(kv => kv.Value).Take(3)
             .Select(kv => $"writes to {kv.Key} ({kv.Value} in the storm so far)").ToList();
-        return new Finding(start, FindingKind.FlushStorm, summary, evidence);
+        return new Finding(start, FindingKind.FlushStorm, summary, evidence, s.Name);
     }
 }

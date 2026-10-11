@@ -119,7 +119,7 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
             $"{a.Name} (pid {pid}) is stuttering: {late} of {a.Window.Count} frames ({share:P0}) in the last " +
             $"{options.StutterWindow.TotalSeconds:F0} s took over {lateLimit:F0} ms while a normal frame takes {median:F1} ms " +
             $"(about {fps:F0} fps). You feel this as uneven, jerky motion.",
-            [$"worst frame {sorted[^1]:F0} ms, 99th percentile {sorted[(int)(sorted.Count * 0.99)]:F0} ms"]));
+            [$"worst frame {sorted[^1]:F0} ms, 99th percentile {sorted[(int)(sorted.Count * 0.99)]:F0} ms"], a.Name));
     }
 
     bool IsSteady(App a)
@@ -140,6 +140,6 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         summary += evidence.Count > 0
             ? " The disks were in trouble at the same moment:"
             : disk is null ? "" : " The disks looked fine at that moment, so the cause is elsewhere (CPU, GPU, the app itself).";
-        return new Finding(to, FindingKind.FrameFreeze, summary, evidence);
+        return new Finding(to, FindingKind.FrameFreeze, summary, evidence, name);
     }
 }

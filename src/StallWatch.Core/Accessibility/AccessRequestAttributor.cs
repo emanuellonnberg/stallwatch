@@ -74,15 +74,18 @@ public sealed class AccessRequestAttributor
         _readies.RemoveAll(x => x.Time < oldestNeeded);
     }
 
-    public static Finding ToFinding(DateTime time, IReadOnlyList<Client> clients, TimeSpan watched)
+    public static Finding ToFinding(DateTime time, IReadOnlyList<Client> clients, TimeSpan watched, int unattributed = 0)
     {
-        var summary = clients.Count == 0
+        var summary = clients.Count == 0 && unattributed > 0
+            ? $"Programs read this window's UI {unattributed} times in {watched.TotalSeconds:F0} s, but their names are unknown " +
+              "(run as administrator to see them). Such accessibility clients switch Chromium/Electron apps into full accessibility mode."
+            : clients.Count == 0
             ? $"No program read this window's UI in {watched.TotalSeconds:F0} s, so nothing here should switch Chromium/Electron apps into full accessibility mode."
             : $"{clients.Count} program(s) read other windows' UI: {string.Join(", ", clients.Select(c => c.Name).Distinct())}. " +
               "Accessibility clients like these switch Chromium/Electron apps (VS Code, Edge, Teams, Spotify, Discord) into full " +
               "accessibility mode, which can stall input for everyone while those apps resize or redraw.";
         var evidence = clients.Select(c => string.Create(CultureInfo.InvariantCulture,
             $"{c.Name} (pid {c.Pid}): {c.Requests:N0} requests via {string.Join(" + ", c.Apis)}")).ToList();
-        return new Finding(time, FindingKind.AccessibilityClient, summary, evidence);
+        return new Finding(time, FindingKind.AccessibilityClient, summary, evidence, clients.FirstOrDefault()?.Name);
     }
 }

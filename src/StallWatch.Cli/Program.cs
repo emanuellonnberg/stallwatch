@@ -6,6 +6,7 @@ using StallWatch.Core.Findings;
 using StallWatch.Core.Frames;
 using StallWatch.Core.Input;
 using StallWatch.Core.Leaks;
+using StallWatch.Core.Store;
 
 namespace StallWatch.Cli;
 
@@ -26,10 +27,14 @@ static class Program
                                                      growth needs at least 10 minutes of watching)
           stallwatch a11y [--seconds N]              which programs read other windows' UI (accessibility
                                                      clients that make VS Code/Edge/Teams stall input) (admin)
+          stallwatch report [--days N] [--out f.html] [--no-open]
+                                                     HTML report of saved findings (default: last 7 days)
 
           --app     report frame freezes only for this program (e.g. DTS.exe); without it, any app that
                     was rendering steadily and stopped for 250 ms or more is reported
           --table   also print a per-second line for every disk with activity
+          --no-store  do not save findings (watch/input/leaks/a11y save to %LOCALAPPDATA%\StallWatch\stallwatch.db;
+                    set STALLWATCH_DATA to use another folder)
         """;
 
     static int Main(string[] args)
@@ -39,6 +44,8 @@ static class Program
         var app = StringArg(args, "--app");
         try
         {
+            using var store = args[0] is "watch" or "input" or "leaks" or "a11y" && !args.Contains("--no-store") ? OpenStore(args[0]) : null;
+            _store = store;
             return args[0] switch
             {
                 "watch" => Watch(IntArg(args, "--minutes"), table, app),
@@ -47,6 +54,7 @@ static class Program
                 "leaks" => Leaks(IntArg(args, "--minutes") ?? 0),
                 "input" => Input(IntArg(args, "--minutes"), StringArg(args, "--log")),
                 "a11y" => Accessibility(IntArg(args, "--seconds") ?? 30),
+                "report" => Report(IntArg(args, "--days") ?? 7, StringArg(args, "--out"), !args.Contains("--no-open")),
                 _ => Fail(Usage),
             };
         }
@@ -105,13 +113,48 @@ static class Program
         return det;
     }
 
-    static void PrintFinding(Finding f) =>
+    static FindingStore? _store;
+
+    static FindingStore? OpenStore(string command)
+    {
+        try
+        {
+            var store = new FindingStore(FindingStore.DefaultPath, flushInterval: TimeSpan.FromSeconds(5));
+            store.BeginSession(command, DateTime.Now);
+            return store;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            Console.Error.WriteLine($"Not saving findings ({e.Message}).");
+            return null;
+        }
+    }
+
+    static int Report(int days, string? outPath, bool open)
+    {
+        if (!File.Exists(FindingStore.DefaultPath)) return Fail($"No saved findings yet ({FindingStore.DefaultPath}). Run stallwatch watch first.");
+        var to = DateTime.Today.AddDays(1);
+        var from = to.AddDays(-Math.Max(1, days));
+        string html;
+        using (var store = new FindingStore(FindingStore.DefaultPath))
+            html = HtmlReport.Render(store.Findings(from, to), store.Sessions(from, to), from, to, DateTime.Now);
+        outPath ??= Path.Combine(FindingStore.DefaultDirectory, "report.html");
+        File.WriteAllText(outPath, html);
+        Console.WriteLine($"Report written to {outPath}");
+        if (open) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(outPath) { UseShellExecute = true });
+        return 0;
+    }
+
+    static void PrintFinding(Finding f)
+    {
+        _store?.Add(f);
         WriteColored(f.ToString(), f.Kind switch
         {
             FindingKind.FlushStorm => ConsoleColor.Magenta,
             FindingKind.ResourceLeak => ConsoleColor.Cyan,
             _ => ConsoleColor.Red,
         });
+    }
 
     static LeakDetector MakeLeakDetector()
     {
@@ -190,7 +233,7 @@ static class Program
 
         IReadOnlyList<AccessRequestAttributor.Client> clients;
         lock (gate) clients = attributor.Finish();
-        PrintFinding(AccessRequestAttributor.ToFinding(DateTime.Now, clients, TimeSpan.FromSeconds(seconds)));
+        PrintFinding(AccessRequestAttributor.ToFinding(DateTime.Now, clients, TimeSpan.FromSeconds(seconds), attributor.Unattributed));
         Console.WriteLine($"({attributor.Requests} requests, {attributor.Unattributed} without a known sender; " +
                           $"probe thread {probe.ThreadId}, {EtwReadyThreadSource.TotalReadyEvents:N0} scheduler events seen)");
         if (etw.IsFaulted) Console.WriteLine("Kernel trace failed: " + etw.Exception!.GetBaseException().Message);
