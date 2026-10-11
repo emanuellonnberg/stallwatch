@@ -4,7 +4,7 @@ public enum FindingKind
 {
     DiskStall,
     FlushStorm,
-    HandleLeak,
+    ResourceLeak,
     FrameFreeze,
     InputDelay,
 }
