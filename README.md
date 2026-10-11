@@ -7,6 +7,10 @@ Status: disk stalls + flush storms (M1), resource leaks (M2), app frame freezes 
 input delivery delay (M4), accessibility clients that make Chromium apps stall input (`a11y`), a saved
 history with an HTML report (M5) and the tray app (M6) work.
 
+Freezes and stutter come with a likely cause when one stands out: CPU, memory/paging, GPU load or full video
+memory (always sampled, cheap), and, in **game mode** (the foreground app renders at 30+ fps), drivers holding a CPU
+(DPC/ISR tracing) and the network (pings to the router and 1.1.1.1; lost or slow replies become their own finding).
+
 Two ways to run it, same engine:
 - **On demand**: `stallwatch watch` in an administrator terminal while you reproduce the problem; Ctrl+C to stop.
 - **Resident**: `StallWatchTray.exe` (src/StallWatch.Tray; `.\install.ps1` builds it and the CLI into `%LOCALAPPDATA%\Programs\StallWatch`) puts a dot in the tray: green watching, red = found something

@@ -24,6 +24,7 @@ public static class HtmlReport
         FindingKind.FrameStutter => "Stutter",
         FindingKind.InputDelay => "Input delay",
         FindingKind.AccessibilityClient => "UI reader",
+        FindingKind.NetworkLag => "Network",
         _ => k.ToString(),
     };
 
@@ -36,6 +37,7 @@ public static class HtmlReport
         FindingKind.FrameStutter => "stutter",
         FindingKind.InputDelay => "input",
         FindingKind.AccessibilityClient => "a11y",
+        FindingKind.NetworkLag => "net",
         _ => "other",
     };
 
@@ -52,7 +54,7 @@ public static class HtmlReport
             <title>StallWatch report</title>
             <style>
             :root { --bg:#fbfbfa; --fg:#1f2328; --muted:#6a737d; --line:#e3e3e0; --card:#fff;
-                    --disk:#c2410c; --flush:#a21caf; --leak:#0e7490; --freeze:#dc2626; --stutter:#d97706; --input:#2563eb; --a11y:#4d7c0f; --other:#6b7280; }
+                    --disk:#c2410c; --flush:#a21caf; --leak:#0e7490; --freeze:#dc2626; --stutter:#d97706; --input:#2563eb; --a11y:#4d7c0f; --net:#0f766e; --other:#6b7280; }
             @media (prefers-color-scheme: dark) { :root { --bg:#161718; --fg:#e6e6e3; --muted:#9a9a96; --line:#2c2d2f; --card:#1e1f21; } }
             * { box-sizing:border-box; }
             body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, "Segoe UI", sans-serif; }
@@ -68,7 +70,7 @@ public static class HtmlReport
             .legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin:8px 0; font-size:13px; }
             .chip { display:inline-block; padding:0 7px; border-radius:10px; color:#fff; font-size:12px; font-weight:600; white-space:nowrap; }
             .disk{background:var(--disk)} .flush{background:var(--flush)} .leak{background:var(--leak)} .freeze{background:var(--freeze)}
-            .stutter{background:var(--stutter)} .input{background:var(--input)} .a11y{background:var(--a11y)} .other{background:var(--other)}
+            .stutter{background:var(--stutter)} .input{background:var(--input)} .a11y{background:var(--a11y)} .net{background:var(--net)} .other{background:var(--other)}
             table { width:100%; border-collapse:collapse; font-size:14px; }
             th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
             td.n { text-align:right; font-variant-numeric:tabular-nums; }

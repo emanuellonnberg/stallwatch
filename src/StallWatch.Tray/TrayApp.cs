@@ -32,6 +32,7 @@ sealed class TrayApp : ApplicationContext
     int _count;
     DateTime _lastFinding = DateTime.MinValue;
     string? _engineError;
+    string? _game; // game mode: drivers and network watched too
     FindingsWindow? _window;
 
     public TrayApp(bool startPaused)
@@ -74,6 +75,7 @@ sealed class TrayApp : ApplicationContext
         _store?.BeginSession("tray", _since);
         var engine = new WatchEngine();
         engine.FindingRaised += OnFinding;
+        engine.GameModeChanged += name => Post(() => { _game = name; UpdateStatus(); });
         var options = new WatchOptions { KernelTrace = _admin, SessionName = SessionName };
         var ct = _cts.Token;
         _run = Task.Run(() => engine.Run(options, ct)).ContinueWith(t =>
@@ -130,7 +132,8 @@ sealed class TrayApp : ApplicationContext
             var recent = DateTime.Now - _lastFinding < AlertColour;
             _icon.Icon = recent ? TrayIcons.Alert : _admin ? TrayIcons.Watching : TrayIcons.Limited;
             status = (_admin ? "Watching" : "Watching input and leaks only (not admin)") +
-                     $" since {_since:HH:mm} · {_count} finding{(_count == 1 ? "" : "s")}";
+                     $" since {_since:HH:mm} · {_count} finding{(_count == 1 ? "" : "s")}" +
+                     (_game is null ? "" : $" · game mode: {_game}");
         }
         _status.Text = status;
         _pause.Text = _run is null ? "Resume" : "Pause";

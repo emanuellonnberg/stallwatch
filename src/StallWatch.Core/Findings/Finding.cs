@@ -9,6 +9,7 @@ public enum FindingKind
     FrameStutter,
     InputDelay,
     AccessibilityClient,
+    NetworkLag,
 }
 
 /// <summary>

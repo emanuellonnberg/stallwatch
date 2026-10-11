@@ -201,6 +201,7 @@ sealed class FindingsWindow : Form
         FindingKind.FrameStutter => Color.FromArgb(0xd9, 0x77, 0x06),
         FindingKind.InputDelay => Color.FromArgb(0x25, 0x63, 0xeb),
         FindingKind.AccessibilityClient => Color.FromArgb(0x4d, 0x7c, 0x0f),
+        FindingKind.NetworkLag => Color.FromArgb(0x0f, 0x76, 0x6e),
         _ => Color.Gray,
     };
 

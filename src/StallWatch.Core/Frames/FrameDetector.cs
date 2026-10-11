@@ -42,6 +42,9 @@ public sealed class FrameDetectorOptions
     /// <summary>Without an app filter, the foreground app is checked for micro-stutter only if it kept up at least
     /// this frame rate over the whole window: games do, a browser that renders only while scrolling does not.</summary>
     public double StutterMinFpsAnyApp { get; init; } = 30;
+
+    /// <summary>What else happened during a freeze or stutter window: (pid, name, from, to) → causes. Optional.</summary>
+    public Func<int, string, DateTime, DateTime, Causes.CauseReport?>? Explain { get; init; }
 }
 
 /// <summary>
@@ -130,11 +133,15 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
 
         a.LastStutterReport = now;
         var fps = a.Window.Count / a.Window.Sum() * 1000;
+        var evidence = new List<string> { $"worst frame {sorted[^1]:F0} ms, 99th percentile {sorted[(int)(sorted.Count * 0.99)]:F0} ms" };
+        var causes = options.Explain?.Invoke(pid, a.Name, a.WindowStart, now);
+        if (causes?.Likely is { } likely) evidence.Add("likely cause: " + likely);
+        if (causes is not null) evidence.AddRange(causes.Evidence);
         FindingRaised?.Invoke(new Finding(now, FindingKind.FrameStutter,
             $"{a.Name} (pid {pid}) is stuttering: {late} of {a.Window.Count} frames ({share:P0}) in the last " +
             $"{options.StutterWindow.TotalSeconds:F0} s took over {lateLimit:F0} ms while a normal frame takes {median:F1} ms " +
             $"(about {fps:F0} fps). You feel this as uneven, jerky motion.",
-            [$"worst frame {sorted[^1]:F0} ms, 99th percentile {sorted[(int)(sorted.Count * 0.99)]:F0} ms"], a.Name));
+            evidence, a.Name));
     }
 
     bool IsSteady(App a)
@@ -151,10 +158,13 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
     Finding Freeze(int pid, string name, double fps, DateTime from, DateTime to, double gapMs)
     {
         var evidence = disk?.EvidenceFor(from, to) ?? [];
+        var causes = options.Explain?.Invoke(pid, name, from, to);
         var summary = $"{name} (pid {pid}) froze for {gapMs:F0} ms (no new frame; it was running at about {fps:F0} fps).";
-        summary += evidence.Count > 0
-            ? " The disks were in trouble at the same moment:"
-            : disk is null ? "" : " The disks looked fine at that moment, so the cause is elsewhere (CPU, GPU, the app itself).";
-        return new Finding(to, FindingKind.FrameFreeze, summary, evidence, name);
+        if (evidence.Count > 0) summary += " The disks were in trouble at the same moment.";
+        else if (causes?.Likely is { } likely) summary += $" Likely cause: {likely}.";
+        else if (causes is not null) summary += " Disk, CPU, memory, GPU" + (causes.Evidence.Any(e => e.Contains("drivers not traced")) ? "" : " and drivers") +
+                                              " looked normal, so it was probably the app itself.";
+        else if (disk is not null) summary += " The disks looked fine at that moment, so the cause is elsewhere (CPU, GPU, the app itself).";
+        return new Finding(to, FindingKind.FrameFreeze, summary, [.. evidence, .. causes?.Evidence ?? []], name);
     }
 }
