@@ -36,3 +36,7 @@ Positive controls:
 - `tools/a11yclient [seconds]` reads the UI of every window that raises focus events (an accessibility client).
 - `tools/wineventprobe [count]` times `NotifyWinEvent`, i.e. what WinEvent listeners cost every UI app.
 - `tools/inputprobe` installs its own hooks: a spike tool, never a measurement.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
