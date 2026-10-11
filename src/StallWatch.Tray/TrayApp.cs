@@ -18,7 +18,9 @@ sealed class TrayApp : ApplicationContext
     readonly ToolStripMenuItem _status = new() { Enabled = false };
     readonly ToolStripMenuItem _pause = new("Pause");
     readonly ToolStripMenuItem _startWithWindows = new("Start with Windows");
-    readonly SynchronizationContext _ui;
+    // Marshals engine-thread callbacks to the UI thread. Not SynchronizationContext.Current: in the constructor (before
+    // Application.Run) that is the default context, whose Post runs on the thread pool.
+    readonly Control _ui = new();
     readonly FindingStore? _store;
     readonly AlertThrottle _throttle = new();
     readonly bool _admin = WatchEngine.IsAdmin;
@@ -34,7 +36,8 @@ sealed class TrayApp : ApplicationContext
 
     public TrayApp(bool startPaused)
     {
-        _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        _ui.CreateControl(); // creates the handle on this (UI) thread
+        _ = _ui.Handle;
         try { _store = new FindingStore(FindingStore.DefaultPath, flushInterval: TimeSpan.FromSeconds(5)); }
         catch (Exception e) { _engineError = "Not saving findings: " + e.Message; }
 
@@ -75,7 +78,7 @@ sealed class TrayApp : ApplicationContext
         var ct = _cts.Token;
         _run = Task.Run(() => engine.Run(options, ct)).ContinueWith(t =>
         {
-            if (t.IsFaulted) _ui.Post(_ => { _engineError = t.Exception!.GetBaseException().Message; Stop(); }, null);
+            if (t.IsFaulted) Post(() => { _engineError = t.Exception!.GetBaseException().Message; Stop(); });
         }, TaskScheduler.Default);
         UpdateStatus();
     }
@@ -96,7 +99,7 @@ sealed class TrayApp : ApplicationContext
     {
         _store?.Add(f);
         Interlocked.Increment(ref _count);
-        _ui.Post(_ =>
+        Post(() =>
         {
             _lastFinding = DateTime.Now;
             UpdateStatus();
@@ -104,7 +107,14 @@ sealed class TrayApp : ApplicationContext
             if (!_throttle.Allow(f)) return;
             _icon.ShowBalloonTip(10_000, $"StallWatch: {HtmlReport.Label(f.Kind)}", Shorten(f.Summary, 250),
                 f.Kind is FindingKind.ResourceLeak or FindingKind.AccessibilityClient ? ToolTipIcon.Info : ToolTipIcon.Warning);
-        }, null);
+        });
+    }
+
+    void Post(Action a)
+    {
+        if (_ui.IsDisposed) return;
+        try { _ui.BeginInvoke(a); }
+        catch (InvalidOperationException) { } // exiting: handle already gone
     }
 
     void UpdateStatus()
@@ -176,6 +186,7 @@ sealed class TrayApp : ApplicationContext
         _refresh.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
+        _ui.Dispose();
         _store?.Dispose();
         base.ExitThreadCore();
     }

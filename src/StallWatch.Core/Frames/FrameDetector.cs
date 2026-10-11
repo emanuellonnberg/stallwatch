@@ -21,7 +21,8 @@ public sealed class FrameDetectorOptions
     /// buffers about once a second) can still be attached as evidence. Zero = report immediately.</summary>
     public TimeSpan EvidenceDelay { get; init; } = TimeSpan.Zero;
 
-    /// <summary>Micro-stutter check (only with an app filter): window length...</summary>
+    /// <summary>Micro-stutter check (with an app filter, or for the foreground app via <see cref="IsForeground"/>):
+    /// window length...</summary>
     public TimeSpan StutterWindow { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>...share of frames that are "late" (over twice the median and at least 16 ms over it)...</summary>
@@ -37,6 +38,10 @@ public sealed class FrameDetectorOptions
     /// is foreground). Background apps pause rendering all the time (a browser tab's animation ends) and nobody sees
     /// it. Null = report every app.</summary>
     public Func<int, bool>? IsForeground { get; init; }
+
+    /// <summary>Without an app filter, the foreground app is checked for micro-stutter only if it kept up at least
+    /// this frame rate over the whole window: games do, a browser that renders only while scrolling does not.</summary>
+    public double StutterMinFpsAnyApp { get; init; } = 30;
 }
 
 /// <summary>
@@ -99,7 +104,8 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         if (a.Intervals.Count > IntervalHistory) a.Intervals.Dequeue();
         a.Last = time;
 
-        if (options.App is not null && gapMs < threshold) a.Window.Add(gapMs); // freezes are reported separately
+        var watchStutter = options.App is not null || options.IsForeground is not null;
+        if (watchStutter && gapMs < threshold) a.Window.Add(gapMs); // freezes are reported separately
         if (time - a.WindowStart >= options.StutterWindow)
         {
             CheckStutter(pid, a, time);
@@ -111,6 +117,9 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
     void CheckStutter(int pid, App a, DateTime now)
     {
         if (a.Window.Count < 100 || now - a.LastStutterReport < options.StutterCooldown) return;
+        if (options.App is null &&
+            (a.Window.Count < options.StutterWindow.TotalSeconds * options.StutterMinFpsAnyApp || options.IsForeground?.Invoke(pid) != true))
+            return;
         var sorted = a.Window.Order().ToList();
         var median = sorted[sorted.Count / 2];
         if (median > options.SteadyIntervalMs) return;

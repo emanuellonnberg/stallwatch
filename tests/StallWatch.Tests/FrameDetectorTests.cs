@@ -136,6 +136,35 @@ public class FrameStutterTests
         Assert.DoesNotContain(findings, f => f.Kind == FindingKind.FrameFreeze);
     }
 
+    static List<Finding> RunAnyApp(Func<int, double> intervalMs, double seconds, bool foreground)
+    {
+        var det = new FrameDetector(new FrameDetectorOptions { IsForeground = _ => foreground });
+        var findings = new List<Finding>();
+        det.FindingRaised += findings.Add;
+        var t = 0.0;
+        for (var i = 0; t < seconds * 1000; i++)
+        {
+            det.Present(1, "FortniteClient-Win64-Shipping.exe", T0.AddMilliseconds(t));
+            t += intervalMs(i);
+        }
+        return findings;
+    }
+
+    [Fact]
+    public void Foreground_game_is_checked_for_stutter_without_app_filter()
+    {
+        var findings = RunAnyApp(i => i % 10 == 9 ? 45 : 8.33, 30, foreground: true);
+        Assert.Contains(findings, f => f.Kind == FindingKind.FrameStutter && f.Summary.Contains("Fortnite"));
+    }
+
+    [Fact]
+    public void Background_or_slow_apps_are_not_checked_for_stutter()
+    {
+        Assert.Empty(RunAnyApp(i => i % 10 == 9 ? 45 : 8.33, 30, foreground: false));
+        // ~22 fps with hitches: below the 30 fps a game would hold.
+        Assert.DoesNotContain(RunAnyApp(i => i % 10 == 9 ? 120 : 40, 30, foreground: true), f => f.Kind == FindingKind.FrameStutter);
+    }
+
     [Fact]
     public void Stutter_is_rate_limited()
     {
