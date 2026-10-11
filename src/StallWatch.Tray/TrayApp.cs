@@ -30,6 +30,7 @@ sealed class TrayApp : ApplicationContext
     int _count;
     DateTime _lastFinding = DateTime.MinValue;
     string? _engineError;
+    FindingsWindow? _window;
 
     public TrayApp(bool startPaused)
     {
@@ -44,7 +45,8 @@ sealed class TrayApp : ApplicationContext
         [
             _status,
             new ToolStripSeparator(),
-            new ToolStripMenuItem("Open report", null, (_, _) => OpenReport()) { Font = new Font(menu.Font, FontStyle.Bold) },
+            new ToolStripMenuItem("Show findings", null, (_, _) => ShowWindow()) { Font = new Font(menu.Font, FontStyle.Bold) },
+            new ToolStripMenuItem("Open HTML report", null, (_, _) => OpenReport()),
             _pause,
             _startWithWindows,
             new ToolStripSeparator(),
@@ -53,8 +55,8 @@ sealed class TrayApp : ApplicationContext
         menu.Opening += (_, _) => { _startWithWindows.Checked = LogonTask.Exists(); UpdateStatus(); };
 
         _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true, Icon = TrayIcons.Paused, Text = "StallWatch" };
-        _icon.DoubleClick += (_, _) => OpenReport();
-        _icon.BalloonTipClicked += (_, _) => OpenReport();
+        _icon.DoubleClick += (_, _) => ShowWindow();
+        _icon.BalloonTipClicked += (_, _) => ShowWindow();
         _refresh.Tick += (_, _) => UpdateStatus();
         _refresh.Start();
 
@@ -98,6 +100,7 @@ sealed class TrayApp : ApplicationContext
         {
             _lastFinding = DateTime.Now;
             UpdateStatus();
+            if (_window is not null) { _store?.Flush(); _window.Reload(); }
             if (!_throttle.Allow(f)) return;
             _icon.ShowBalloonTip(10_000, $"StallWatch: {HtmlReport.Label(f.Kind)}", Shorten(f.Summary, 250),
                 f.Kind is FindingKind.ResourceLeak or FindingKind.AccessibilityClient ? ToolTipIcon.Info : ToolTipIcon.Warning);
@@ -122,6 +125,20 @@ sealed class TrayApp : ApplicationContext
         _status.Text = status;
         _pause.Text = _run is null ? "Resume" : "Pause";
         _icon.Text = Shorten("StallWatch: " + status, 127); // NotifyIcon.Text limit
+    }
+
+    void ShowWindow()
+    {
+        if (_store is null) return;
+        if (_window is null)
+        {
+            _store.Flush();
+            _window = new FindingsWindow(_store);
+            _window.FormClosed += (_, _) => { _window.Dispose(); _window = null; };
+            _window.Show();
+        }
+        if (_window.WindowState == FormWindowState.Minimized) _window.WindowState = FormWindowState.Normal;
+        _window.Activate();
     }
 
     void OpenReport()
@@ -155,6 +172,7 @@ sealed class TrayApp : ApplicationContext
     protected override void ExitThreadCore()
     {
         Stop();
+        _window?.Close();
         _refresh.Dispose();
         _icon.Visible = false;
         _icon.Dispose();

@@ -11,7 +11,7 @@ Two ways to run it, same engine:
 - **On demand**: `stallwatch watch` in an administrator terminal while you reproduce the problem; Ctrl+C to stop.
 - **Resident**: `StallWatchTray.exe` (src/StallWatch.Tray; `.\install.ps1` builds it and the CLI into `%LOCALAPPDATA%\Programs\StallWatch`) puts a dot in the tray: green watching, red = found something
   in the last 2 minutes, yellow = not elevated (input + leaks only), grey = paused. Alerts are limited to one per kind
-  per 5 minutes and one per minute overall; everything is saved. Menu: Open report, Pause, Start with Windows
+  per 5 minutes and one per minute overall; everything is saved. Double-click it (or a pop-up) for the findings window: a timeline per day where repeats fold into one row, details of the selected finding, and the programs behind most findings. Menu: Show findings, Open HTML report, Pause, Start with Windows
   (a logon task with highest privileges, so no UAC prompt at each login), Exit.
 
 ```
