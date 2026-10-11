@@ -46,6 +46,12 @@ public sealed class DiskDetector(DiskDetectorOptions options)
         public readonly HashSet<int> Disks = [];
     }
 
+    // Short memory for correlating other findings (e.g. an app freeze) with what the disks were doing.
+    static readonly TimeSpan RecentSpan = TimeSpan.FromSeconds(120);
+    const double RecentSlowMs = 50;
+    readonly Queue<DiskOp> _recentSlow = new();
+    readonly Queue<DiskOp> _recentFlushes = new();
+
     readonly Dictionary<int, Window> _windows = new();
     readonly Dictionary<int, StormState> _storms = new();
     long _currentSecond = long.MinValue;
@@ -58,6 +64,8 @@ public sealed class DiskDetector(DiskDetectorOptions options)
         if (_currentSecond == long.MinValue) _currentSecond = sec;
         if (sec > _currentSecond) CloseUntil(sec);
         // Late events (sec < current) are folded into the current second; ETW reordering is small.
+
+        Remember(op);
 
         if (!_windows.TryGetValue(op.Disk, out var w)) _windows[op.Disk] = w = new Window();
         if (!w.Procs.TryGetValue(op.ProcessId, out var p)) w.Procs[op.ProcessId] = p = new ProcStats { Name = op.ProcessName };
@@ -80,6 +88,40 @@ public sealed class DiskDetector(DiskDetectorOptions options)
         if (op.Kind == DiskOpKind.Flush) { s.FlushesThisSecond++; s.Disks.Add(op.Disk); }
         if (op.Kind == DiskOpKind.Write && op.FileName is { Length: > 0 } wf)
             s.Files[wf] = s.Files.GetValueOrDefault(wf) + 1;
+    }
+
+    void Remember(DiskOp op)
+    {
+        if (op.ElapsedMs >= RecentSlowMs) _recentSlow.Enqueue(op);
+        if (op.Kind == DiskOpKind.Flush) _recentFlushes.Enqueue(op);
+        var cutoff = op.Time - RecentSpan;
+        while (_recentSlow.TryPeek(out var o) && o.Time < cutoff) _recentSlow.Dequeue();
+        while (_recentFlushes.TryPeek(out var o) && o.Time < cutoff) _recentFlushes.Dequeue();
+    }
+
+    /// <summary>
+    /// Plain-language lines about disk trouble overlapping [from, to]: the slowest I/Os in flight and who was
+    /// forcing writes. Empty when the disks were fine. Covers roughly the last two minutes.
+    /// </summary>
+    public List<string> EvidenceFor(DateTime from, DateTime to)
+    {
+        var lines = new List<string>();
+        foreach (var op in _recentSlow
+                     .Where(o => o.Time >= from && o.Time - TimeSpan.FromMilliseconds(o.ElapsedMs) <= to)
+                     .OrderByDescending(o => o.ElapsedMs).Take(3))
+        {
+            var what = op.Kind == DiskOpKind.Flush ? "a flush" : op.Kind == DiskOpKind.Read ? "a read" : "a write";
+            lines.Add($"{DiskName(op.Disk)}: {what} by {op.ProcessName} took {op.ElapsedMs:F0} ms" +
+                      (op.FileName is { } f ? $" ({f})" : ""));
+        }
+        foreach (var g in _recentFlushes.Where(o => o.Time >= from && o.Time <= to)
+                     .GroupBy(o => o.ProcessName).OrderByDescending(g => g.Count()).Take(3))
+        {
+            if (g.Count() < 5) break;
+            var disks = string.Join(", ", g.Select(o => o.Disk).Distinct().Select(DiskName));
+            lines.Add($"{g.Key} forced {g.Count()} flushes on {disks} in that time");
+        }
+        return lines;
     }
 
     /// <summary>Close every second before <paramref name="now"/>.</summary>

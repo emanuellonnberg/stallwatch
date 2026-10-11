@@ -31,15 +31,25 @@ public sealed class EtwDiskSource
 
     public const string SessionName = "StallWatch-Disk";
 
+    /// <summary>Microsoft-Windows-DXGI: Present_Start (event 42) marks every frame an app hands to the screen,
+    /// the same signal PresentMon uses.</summary>
+    public static readonly Guid DxgiProvider = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
+    const int DxgiPresentStart = 42;
+
     const int MaxNames = 200_000;
     const int MaxPendingIrps = 100_000;
 
     readonly Action<DiskOp> _onOp;
+    readonly Action<int, string, DateTime>? _onPresent;
     readonly Dictionary<ulong, (int Pid, string Name)> _issuer = new();
     readonly Dictionary<ulong, string> _files = new();   // FileKey -> path
     readonly Dictionary<ulong, string> _handles = new(); // FileObject -> path (open handles)
 
-    EtwDiskSource(Action<DiskOp> onOp) => _onOp = onOp;
+    EtwDiskSource(Action<DiskOp> onOp, Action<int, string, DateTime>? onPresent)
+    {
+        _onOp = onOp;
+        _onPresent = onPresent;
+    }
 
     void Attach(TraceEventDispatcher source)
     {
@@ -69,6 +79,17 @@ public sealed class EtwDiskSource
         k.FileIOCleanup += f => Link(f.FileObject, f.FileKey);
         k.FileIOClose += f => { Link(f.FileObject, f.FileKey); _handles.Remove(f.FileObject); };
         k.FileIOFlush += f => Link(f.FileObject, f.FileKey);
+    }
+
+    void AttachPresents(TraceEventDispatcher source)
+    {
+        if (_onPresent is null) return;
+        var registered = new RegisteredTraceEventParser(source);
+        registered.All += e =>
+        {
+            if (e.ProviderGuid == DxgiProvider && (int)e.ID == DxgiPresentStart && e.ProcessID > 0)
+                _onPresent(e.ProcessID, Name(e), e.TimeStamp);
+        };
     }
 
     void RememberIssuer(DiskIOInitTraceData d)
@@ -112,21 +133,26 @@ public sealed class EtwDiskSource
     }
 
     /// <summary>Starts a real-time kernel session. Blocks until <paramref name="ct"/> is cancelled. Needs admin.</summary>
-    public static void RunLive(Action<DiskOp> onOp, CancellationToken ct)
+    public static void RunLive(Action<DiskOp> onOp, CancellationToken ct, Action<int, string, DateTime>? onPresent = null)
     {
         using var session = new TraceEventSession(SessionName) { StopOnDispose = true };
         session.BufferSizeMB = 64;
         session.EnableKernelProvider(Keywords);
-        new EtwDiskSource(onOp).Attach(session.Source);
+        if (onPresent != null) session.EnableProvider(DxgiProvider, TraceEventLevel.Informational);
+        var src = new EtwDiskSource(onOp, onPresent);
+        src.Attach(session.Source);
+        src.AttachPresents(session.Source);
         using var reg = ct.Register(() => session.Stop());
         session.Source.Process();
     }
 
     /// <summary>Replays an .etl file through the same handlers.</summary>
-    public static void Replay(string etlPath, Action<DiskOp> onOp)
+    public static void Replay(string etlPath, Action<DiskOp> onOp, Action<int, string, DateTime>? onPresent = null)
     {
         using var source = new ETWTraceEventSource(etlPath);
-        new EtwDiskSource(onOp).Attach(source);
+        var src = new EtwDiskSource(onOp, onPresent);
+        src.Attach(source);
+        src.AttachPresents(source);
         source.Process();
     }
 
@@ -136,6 +162,7 @@ public sealed class EtwDiskSource
         using var session = new TraceEventSession(SessionName + "-File", etlPath) { StopOnDispose = true };
         session.BufferSizeMB = 64;
         session.EnableKernelProvider(Keywords);
+        session.EnableProvider(DxgiProvider, TraceEventLevel.Informational);
         Thread.Sleep(duration);
     }
 }

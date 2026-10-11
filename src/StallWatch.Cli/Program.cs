@@ -2,6 +2,7 @@ using System.Security.Principal;
 using StallWatch.Core.Disk;
 using StallWatch.Core.Etw;
 using StallWatch.Core.Findings;
+using StallWatch.Core.Frames;
 using StallWatch.Core.Leaks;
 
 namespace StallWatch.Cli;
@@ -11,12 +12,16 @@ static class Program
     const string Usage = """
         stallwatch - find what makes Windows stutter
 
-          stallwatch watch [--minutes N] [--table]   live: disk stalls, flush storms, leaks (admin)
-          stallwatch analyze <file.etl> [--table]    same analysis on a recorded trace
+          stallwatch watch [--app X.exe] [--minutes N] [--table]
+                                                     live: app freezes, disk stalls, flush storms, leaks (admin)
+          stallwatch analyze <file.etl> [--app X.exe] [--table]
+                                                     same analysis on a recorded trace
           stallwatch record <file.etl> [--seconds N] record a trace for later analysis (admin)
           stallwatch leaks [--minutes N]             handle/thread/memory leaks (no admin needed;
                                                      growth needs at least 10 minutes of watching)
 
+          --app     report frame freezes only for this program (e.g. DTS.exe); without it, any app that
+                    was rendering steadily and stopped for 250 ms or more is reported
           --table   also print a per-second line for every disk with activity
         """;
 
@@ -24,12 +29,13 @@ static class Program
     {
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
         var table = args.Contains("--table");
+        var app = StringArg(args, "--app");
         try
         {
             return args[0] switch
             {
-                "watch" => Watch(IntArg(args, "--minutes"), table),
-                "analyze" when args.Length > 1 => Analyze(args[1], table),
+                "watch" => Watch(IntArg(args, "--minutes"), table, app),
+                "analyze" when args.Length > 1 => Analyze(args[1], table, app),
                 "record" when args.Length > 1 => Record(args[1], IntArg(args, "--seconds") ?? 60),
                 "leaks" => Leaks(IntArg(args, "--minutes") ?? 0),
                 _ => Fail(Usage),
@@ -45,6 +51,23 @@ static class Program
     {
         var i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var v) ? v : null;
+    }
+
+    static string? StringArg(string[] args, string name)
+    {
+        var i = Array.IndexOf(args, name);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    static FrameDetector MakeFrameDetector(DiskDetector disk, string? app, bool live)
+    {
+        var frames = new FrameDetector(new FrameDetectorOptions
+        {
+            App = app,
+            EvidenceDelay = live ? TimeSpan.FromSeconds(3) : TimeSpan.Zero,
+        }, disk);
+        frames.FindingRaised += PrintFinding;
+        return frames;
     }
 
     static int Fail(string msg) { Console.Error.WriteLine(msg); return 1; }
@@ -113,18 +136,22 @@ static class Program
         Console.ForegroundColor = old;
     }
 
-    static int Watch(int? minutes, bool table)
+    static int Watch(int? minutes, bool table, string? app)
     {
         if (!IsAdmin()) return Fail("stallwatch watch needs an administrator terminal (kernel disk tracing).");
 
         var det = MakeDetector(table);
+        var frames = MakeFrameDetector(det, app, live: true);
         var gate = new object();
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
         if (minutes is { } m) cts.CancelAfter(TimeSpan.FromMinutes(m));
 
         Console.WriteLine($"Watching disks{(minutes is { } mm ? $" for {mm} min" : "")}. Ctrl+C to stop.");
-        var etw = new Thread(() => EtwDiskSource.RunLive(op => { lock (gate) det.Add(op); }, cts.Token))
+        var etw = new Thread(() => EtwDiskSource.RunLive(
+            op => { lock (gate) det.Add(op); },
+            cts.Token,
+            (pid, name, t) => { lock (gate) frames.Present(pid, name, t); }))
         { IsBackground = true, Name = "etw" };
         etw.Start();
 
@@ -132,7 +159,11 @@ static class Program
         var nextLeakPoll = DateTime.MinValue;
         while (!cts.Token.WaitHandle.WaitOne(1000))
         {
-            lock (gate) det.Tick(DateTime.Now.AddSeconds(-1)); // let late ETW events land before closing a second
+            lock (gate)
+            {
+                det.Tick(DateTime.Now.AddSeconds(-1)); // let late ETW events land before closing a second
+                frames.Tick(DateTime.Now);
+            }
             if (DateTime.Now < nextLeakPoll) continue;
             nextLeakPoll = DateTime.Now + LeakPollInterval;
             var snapshot = ProcessSampler.Snapshot();
@@ -144,10 +175,11 @@ static class Program
         return 0;
     }
 
-    static int Analyze(string etl, bool table)
+    static int Analyze(string etl, bool table, string? app)
     {
         if (!File.Exists(etl)) return Fail($"No such file: {etl}");
         var det = MakeDetector(table);
+        var frames = MakeFrameDetector(det, app, live: false);
         DateTime last = default;
         var debug = Environment.GetEnvironmentVariable("STALLWATCH_DEBUG_PROC") is { Length: > 0 } d ? d : null;
         EtwDiskSource.Replay(etl, op =>
@@ -156,7 +188,7 @@ static class Program
                 Console.WriteLine($"  op {op.Time:HH:mm:ss.fff} {op.Kind} pid={op.ProcessId} {op.ProcessName} disk={op.Disk} file={op.FileName} {op.ElapsedMs:F2}ms");
             det.Add(op);
             last = op.Time;
-        });
+        }, (pid, name, t) => frames.Present(pid, name, t));
         det.Tick(last.AddSeconds(2));
         return 0;
     }
