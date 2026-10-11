@@ -3,6 +3,7 @@ using StallWatch.Core.Disk;
 using StallWatch.Core.Etw;
 using StallWatch.Core.Findings;
 using StallWatch.Core.Frames;
+using StallWatch.Core.Input;
 using StallWatch.Core.Leaks;
 
 namespace StallWatch.Cli;
@@ -13,10 +14,13 @@ static class Program
         stallwatch - find what makes Windows stutter
 
           stallwatch watch [--app X.exe] [--minutes N] [--table]
-                                                     live: app freezes, disk stalls, flush storms, leaks (admin)
+                                                     live: app freezes, disk stalls, flush storms, input delay, leaks (admin)
           stallwatch analyze <file.etl> [--app X.exe] [--table]
                                                      same analysis on a recorded trace
           stallwatch record <file.etl> [--seconds N] record a trace for later analysis (admin)
+          stallwatch input [--minutes N] [--log f.csv]
+                                                     mouse/keyboard delivery delay only (no admin needed);
+                                                     --log writes every event delayed 50 ms or more
           stallwatch leaks [--minutes N]             handle/thread/memory leaks (no admin needed;
                                                      growth needs at least 10 minutes of watching)
 
@@ -38,6 +42,7 @@ static class Program
                 "analyze" when args.Length > 1 => Analyze(args[1], table, app),
                 "record" when args.Length > 1 => Record(args[1], IntArg(args, "--seconds") ?? 60),
                 "leaks" => Leaks(IntArg(args, "--minutes") ?? 0),
+                "input" => Input(IntArg(args, "--minutes"), StringArg(args, "--log")),
                 _ => Fail(Usage),
             };
         }
@@ -111,6 +116,51 @@ static class Program
         return det;
     }
 
+    // One monitor per process: raw-input registration is per process, a second one would steal the events.
+    static (InputDetector det, RawInputMonitor monitor) StartInput(object gate, StreamWriter? log = null, Action<double>? tap = null)
+    {
+        var det = new InputDetector(new InputDetectorOptions());
+        det.FindingRaised += PrintFinding;
+        var monitor = new RawInputMonitor((t, kind, ms) =>
+        {
+            lock (gate)
+            {
+                det.Add(t, kind, ms);
+                tap?.Invoke(ms);
+                if (log != null && ms >= 50) log.WriteLine($"{t:HH:mm:ss.fff},{kind},{ms:F0}");
+            }
+        });
+        return (det, monitor);
+    }
+
+    static int Input(int? minutes, string? logPath)
+    {
+        using var log = logPath is null ? null : new StreamWriter(logPath) { AutoFlush = true };
+        log?.WriteLine("time,kind,delay_ms");
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        if (minutes is { } m) cts.CancelAfter(TimeSpan.FromMinutes(m));
+        var gate = new object();
+        var window = new List<double>();
+        var (_, monitor) = StartInput(gate, log, window.Add);
+        using (monitor)
+        {
+            Console.WriteLine("Watching mouse/keyboard delivery delay. Use the PC normally; Ctrl+C to stop.");
+            Console.WriteLine("Every 5 s: events, worst delay, events delayed 100 ms or more.");
+            while (!cts.Token.WaitHandle.WaitOne(5000))
+            {
+                double[] w;
+                lock (gate) { w = window.ToArray(); window.Clear(); }
+                if (w.Length == 0) continue;
+                var late = w.Count(x => x >= 100);
+                var line = $"{DateTime.Now:HH:mm:ss}  {w.Length,5} events  worst {w.Max(),6:F0} ms  {late,4} late";
+                if (late > 0) WriteColored(line, w.Max() >= 250 ? ConsoleColor.Red : ConsoleColor.DarkYellow);
+                else Console.WriteLine(line);
+            }
+        }
+        return 0;
+    }
+
     static readonly TimeSpan LeakPollInterval = TimeSpan.FromSeconds(30);
 
     static int Leaks(int minutes)
@@ -156,6 +206,8 @@ static class Program
         etw.Start();
 
         var leaks = MakeLeakDetector();
+        var (_, inputMonitor) = StartInput(gate);
+        using var _input = inputMonitor;
         var nextLeakPoll = DateTime.MinValue;
         while (!cts.Token.WaitHandle.WaitOne(1000))
         {
