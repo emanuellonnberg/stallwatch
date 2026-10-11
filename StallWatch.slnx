@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StallWatch.Cli/StallWatch.Cli.csproj" />
+    <Project Path="src/StallWatch.Core/StallWatch.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/StallWatch.Tests/StallWatch.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/flushstorm/flushstorm.csproj" />
+  </Folder>
+</Solution>
