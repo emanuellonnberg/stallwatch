@@ -9,7 +9,7 @@ history with an HTML report (M5) and the tray app (M6) work.
 
 Two ways to run it, same engine:
 - **On demand**: `stallwatch watch` in an administrator terminal while you reproduce the problem; Ctrl+C to stop.
-- **Resident**: `StallWatch.exe` (src/StallWatch.Tray) puts a dot in the tray: green watching, red = found something
+- **Resident**: `StallWatchTray.exe` (src/StallWatch.Tray; `.\install.ps1` builds it and the CLI into `%LOCALAPPDATA%\Programs\StallWatch`) puts a dot in the tray: green watching, red = found something
   in the last 2 minutes, yellow = not elevated (input + leaks only), grey = paused. Alerts are limited to one per kind
   per 5 minutes and one per minute overall; everything is saved. Menu: Open report, Pause, Start with Windows
   (a logon task with highest privileges, so no UAC prompt at each login), Exit.
