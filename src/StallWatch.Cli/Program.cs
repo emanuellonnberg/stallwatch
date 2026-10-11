@@ -1,4 +1,3 @@
-using System.Security.Principal;
 using StallWatch.Core.Accessibility;
 using StallWatch.Core.Disk;
 using StallWatch.Core.Etw;
@@ -6,6 +5,7 @@ using StallWatch.Core.Findings;
 using StallWatch.Core.Frames;
 using StallWatch.Core.Input;
 using StallWatch.Core.Leaks;
+using StallWatch.Core.Monitoring;
 using StallWatch.Core.Store;
 
 namespace StallWatch.Cli;
@@ -89,9 +89,7 @@ static class Program
 
     static int Fail(string msg) { Console.Error.WriteLine(msg); return 1; }
 
-    static bool IsAdmin() =>
-        // Built-in role, not the group name: "Administrators" is localized (e.g. "Administratörer").
-        new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+    static bool IsAdmin() => WatchEngine.IsAdmin;
 
     static DiskDetector MakeDetector(bool table)
     {
@@ -133,13 +131,8 @@ static class Program
     static int Report(int days, string? outPath, bool open)
     {
         if (!File.Exists(FindingStore.DefaultPath)) return Fail($"No saved findings yet ({FindingStore.DefaultPath}). Run stallwatch watch first.");
-        var to = DateTime.Today.AddDays(1);
-        var from = to.AddDays(-Math.Max(1, days));
-        string html;
         using (var store = new FindingStore(FindingStore.DefaultPath))
-            html = HtmlReport.Render(store.Findings(from, to), store.Sessions(from, to), from, to, DateTime.Now);
-        outPath ??= Path.Combine(FindingStore.DefaultDirectory, "report.html");
-        File.WriteAllText(outPath, html);
+            outPath = ReportWriter.Write(store, days, outPath);
         Console.WriteLine($"Report written to {outPath}");
         if (open) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(outPath) { UseShellExecute = true });
         return 0;
@@ -269,40 +262,23 @@ static class Program
     {
         if (!IsAdmin()) return Fail("stallwatch watch needs an administrator terminal (kernel disk tracing).");
 
-        var det = MakeDetector(table);
-        var frames = MakeFrameDetector(det, app, live: true);
-        var gate = new object();
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
         if (minutes is { } m) cts.CancelAfter(TimeSpan.FromMinutes(m));
 
-        Console.WriteLine($"Watching disks{(minutes is { } mm ? $" for {mm} min" : "")}. Ctrl+C to stop.");
-        var etw = new Thread(() => EtwDiskSource.RunLive(
-            op => { lock (gate) det.Add(op); },
-            cts.Token,
-            (pid, name, t) => { lock (gate) frames.Present(pid, name, t); }))
-        { IsBackground = true, Name = "etw" };
-        etw.Start();
-
-        var leaks = MakeLeakDetector();
-        var (_, inputMonitor) = StartInput(gate);
-        using var _input = inputMonitor;
-        var nextLeakPoll = DateTime.MinValue;
-        while (!cts.Token.WaitHandle.WaitOne(1000))
+        var engine = new WatchEngine();
+        engine.FindingRaised += PrintFinding;
+        engine.SecondClosed += (s, diskName) =>
         {
-            lock (gate)
-            {
-                det.Tick(DateTime.Now.AddSeconds(-1)); // let late ETW events land before closing a second
-                frames.Tick(DateTime.Now);
-            }
-            if (DateTime.Now < nextLeakPoll) continue;
-            nextLeakPoll = DateTime.Now + LeakPollInterval;
-            var snapshot = ProcessSampler.Snapshot();
-            lock (gate) leaks.Observe(DateTime.Now, snapshot);
-        }
-
-        etw.Join(TimeSpan.FromSeconds(5));
-        lock (gate) det.Tick(DateTime.Now.AddSeconds(2));
+            var notable = s.MaxMs >= 50 || s.Flushes >= 50;
+            if (!table && !notable) return;
+            if (s.Reads + s.Writes + s.Flushes == 0) return;
+            var line = $"{s.Start:HH:mm:ss} {diskName,-38} {s.Reads,5} rd {s.Writes,5} wr {s.Flushes,5} flush" +
+                       $"  max {s.MaxMs,6:F0} ms  {s.Bytes / 1024.0 / 1024.0,7:F1} MB";
+            if (notable) WriteColored(line, ConsoleColor.DarkYellow); else Console.WriteLine(line);
+        };
+        Console.WriteLine($"Watching disks, frames, input and leaks{(minutes is { } mm ? $" for {mm} min" : "")}. Ctrl+C to stop.");
+        engine.Run(new WatchOptions { App = app }, cts.Token);
         return 0;
     }
 

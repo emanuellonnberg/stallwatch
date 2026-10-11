@@ -32,6 +32,11 @@ public sealed class FrameDetectorOptions
 
     /// <summary>Gaps longer than this are the app being minimized/hidden or idle, not frozen.</summary>
     public double MaxFreezeMs { get; init; } = 10_000;
+
+    /// <summary>Without an app filter, report a freeze only if this says the process is in front of the user (pid →
+    /// is foreground). Background apps pause rendering all the time (a browser tab's animation ends) and nobody sees
+    /// it. Null = report every app.</summary>
+    public Func<int, bool>? IsForeground { get; init; }
 }
 
 /// <summary>
@@ -81,7 +86,8 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         if (gapMs < 0) return; // out-of-order delivery; ignore
         var threshold = options.App is null ? options.FreezeMsAnyApp : options.FreezeMs;
 
-        if (gapMs >= threshold && gapMs <= options.MaxFreezeMs && IsSteady(a))
+        if (gapMs >= threshold && gapMs <= options.MaxFreezeMs && IsSteady(a) &&
+            (options.App is not null || options.IsForeground?.Invoke(pid) != false))
         {
             var (from, fps) = (a.Last, Fps(a));
             Finding Make() => Freeze(pid, a.Name, fps, from, time, gapMs);

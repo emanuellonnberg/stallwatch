@@ -145,10 +145,14 @@ public sealed class EtwDiskSource
             : e.ProcessName + ".exe";
     }
 
-    /// <summary>Starts a real-time kernel session. Blocks until <paramref name="ct"/> is cancelled. Needs admin.</summary>
-    public static void RunLive(Action<DiskOp> onOp, CancellationToken ct, Action<int, string, DateTime>? onPresent = null)
+    /// <summary>
+    /// Starts a real-time kernel session. Blocks until <paramref name="ct"/> is cancelled. Needs admin. Starting a session
+    /// with a name already in use takes it over, so each kind of host (CLI, tray) passes its own name.
+    /// </summary>
+    public static void RunLive(Action<DiskOp> onOp, CancellationToken ct, Action<int, string, DateTime>? onPresent = null,
+                               string sessionName = SessionName)
     {
-        using var session = new TraceEventSession(SessionName) { StopOnDispose = true };
+        using var session = new TraceEventSession(sessionName) { StopOnDispose = true };
         session.BufferSizeMB = 64;
         session.EnableKernelProvider(Keywords);
         if (onPresent != null) session.EnableProvider(DxgKrnlProvider, TraceEventLevel.Informational, DxgKrnlPresentKeyword);

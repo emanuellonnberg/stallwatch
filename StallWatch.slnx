@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/StallWatch.Cli/StallWatch.Cli.csproj" />
     <Project Path="src/StallWatch.Core/StallWatch.Core.csproj" />
+    <Project Path="src/StallWatch.Tray/StallWatch.Tray.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/StallWatch.Tests/StallWatch.Tests.csproj" />

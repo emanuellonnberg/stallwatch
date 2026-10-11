@@ -73,6 +73,21 @@ public class FrameDetectorTests
     }
 
     [Fact]
+    public void Without_app_filter_only_the_foreground_app_is_reported()
+    {
+        var det = new FrameDetector(new FrameDetectorOptions { IsForeground = pid => pid == 94052 });
+        var findings = new List<Finding>();
+        det.FindingRaised += findings.Add;
+
+        var last = Present(det, 0, 5, pid: 1, name: "chrome.exe");
+        Present(det, last + 0.4, 1, pid: 1, name: "chrome.exe");
+        last = Present(det, 0, 5);
+        Present(det, last + 0.4, 1);
+
+        Assert.Contains("DTS.exe", Assert.Single(findings).Summary);
+    }
+
+    [Fact]
     public void Freeze_includes_disk_evidence_from_the_same_moment()
     {
         var disk = new DiskDetector(new DiskDetectorOptions()) { DiskName = d => d == 4 ? "C: (Samsung SSD 980 PRO 2TB)" : $"disk {d}" };

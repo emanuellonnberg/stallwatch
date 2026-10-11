@@ -4,8 +4,15 @@ Finds what makes Windows stutter and says it plainly — e.g.
 "Code.exe is forcing writes to disk ~200 times per second; C: took 1.4 s to answer".
 
 Status: disk stalls + flush storms (M1), resource leaks (M2), app frame freezes with disk evidence (M3),
-input delivery delay (M4), accessibility clients that make Chromium apps stall input (`a11y`), and a saved
-history with an HTML report (M5) work. The tray app (M6) is next.
+input delivery delay (M4), accessibility clients that make Chromium apps stall input (`a11y`), a saved
+history with an HTML report (M5) and the tray app (M6) work.
+
+Two ways to run it, same engine:
+- **On demand**: `stallwatch watch` in an administrator terminal while you reproduce the problem; Ctrl+C to stop.
+- **Resident**: `StallWatch.exe` (src/StallWatch.Tray) puts a dot in the tray: green watching, red = found something
+  in the last 2 minutes, yellow = not elevated (input + leaks only), grey = paused. Alerts are limited to one per kind
+  per 5 minutes and one per minute overall; everything is saved. Menu: Open report, Pause, Start with Windows
+  (a logon task with highest privileges, so no UAC prompt at each login), Exit.
 
 ```
 stallwatch watch [--app X.exe] [--minutes N] [--table]   live, needs an administrator terminal
