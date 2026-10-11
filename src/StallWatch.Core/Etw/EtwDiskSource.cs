@@ -31,8 +31,14 @@ public sealed class EtwDiskSource
 
     public const string SessionName = "StallWatch-Disk";
 
-    /// <summary>Microsoft-Windows-DXGI: Present_Start (event 42) marks every frame an app hands to the screen,
-    /// the same signal PresentMon uses.</summary>
+    /// <summary>Microsoft-Windows-DxgKrnl "Present" (event 184, keyword Present): one per frame for every graphics
+    /// API (D3D9-12, Vulkan, OpenGL), since all of them present through the graphics kernel.</summary>
+    public static readonly Guid DxgKrnlProvider = new("802EC45A-1E99-4B83-9920-87C98277BA9D");
+    const ulong DxgKrnlPresentKeyword = 0x8000000;
+    const int DxgKrnlPresent = 184;
+
+    /// <summary>Microsoft-Windows-DXGI Present_Start (event 42): older recordings only had this; used when a trace
+    /// has no DxgKrnl presents.</summary>
     public static readonly Guid DxgiProvider = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
     const int DxgiPresentStart = 42;
 
@@ -85,9 +91,16 @@ public sealed class EtwDiskSource
     {
         if (_onPresent is null) return;
         var registered = new RegisteredTraceEventParser(source);
+        var sawKernelPresent = false;
         registered.All += e =>
         {
-            if (e.ProviderGuid == DxgiProvider && (int)e.ID == DxgiPresentStart && e.ProcessID > 0)
+            if (e.ProcessID <= 0) return;
+            if (e.ProviderGuid == DxgKrnlProvider && (int)e.ID == DxgKrnlPresent)
+            {
+                sawKernelPresent = true;
+                _onPresent(e.ProcessID, Name(e), e.TimeStamp);
+            }
+            else if (!sawKernelPresent && e.ProviderGuid == DxgiProvider && (int)e.ID == DxgiPresentStart)
                 _onPresent(e.ProcessID, Name(e), e.TimeStamp);
         };
     }
@@ -138,7 +151,7 @@ public sealed class EtwDiskSource
         using var session = new TraceEventSession(SessionName) { StopOnDispose = true };
         session.BufferSizeMB = 64;
         session.EnableKernelProvider(Keywords);
-        if (onPresent != null) session.EnableProvider(DxgiProvider, TraceEventLevel.Informational);
+        if (onPresent != null) session.EnableProvider(DxgKrnlProvider, TraceEventLevel.Informational, DxgKrnlPresentKeyword);
         var src = new EtwDiskSource(onOp, onPresent);
         src.Attach(session.Source);
         src.AttachPresents(session.Source);
@@ -162,7 +175,7 @@ public sealed class EtwDiskSource
         using var session = new TraceEventSession(SessionName + "-File", etlPath) { StopOnDispose = true };
         session.BufferSizeMB = 64;
         session.EnableKernelProvider(Keywords);
-        session.EnableProvider(DxgiProvider, TraceEventLevel.Informational);
+        session.EnableProvider(DxgKrnlProvider, TraceEventLevel.Informational, DxgKrnlPresentKeyword);
         Thread.Sleep(duration);
     }
 }

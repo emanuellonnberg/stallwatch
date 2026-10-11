@@ -21,6 +21,15 @@ public sealed class FrameDetectorOptions
     /// buffers about once a second) can still be attached as evidence. Zero = report immediately.</summary>
     public TimeSpan EvidenceDelay { get; init; } = TimeSpan.Zero;
 
+    /// <summary>Micro-stutter check (only with an app filter): window length...</summary>
+    public TimeSpan StutterWindow { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>...share of frames that are "late" (over twice the median and at least 16 ms over it)...</summary>
+    public double StutterShare { get; init; } = 0.05;
+
+    /// <summary>...and at most one stutter report per app this often.</summary>
+    public TimeSpan StutterCooldown { get; init; } = TimeSpan.FromMinutes(1);
+
     /// <summary>Gaps longer than this are the app being minimized/hidden or idle, not frozen.</summary>
     public double MaxFreezeMs { get; init; } = 10_000;
 }
@@ -39,6 +48,9 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         public required string Name;
         public DateTime Last;
         public readonly Queue<double> Intervals = new();
+        public DateTime WindowStart;
+        public readonly List<double> Window = [];
+        public DateTime LastStutterReport = DateTime.MinValue;
     }
 
     const int IntervalHistory = 60;
@@ -61,7 +73,7 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
 
         if (!_apps.TryGetValue(pid, out var a) || !string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
         {
-            _apps[pid] = new App { Name = name, Last = time };
+            _apps[pid] = new App { Name = name, Last = time, WindowStart = time };
             return;
         }
 
@@ -80,6 +92,34 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         a.Intervals.Enqueue(gapMs);
         if (a.Intervals.Count > IntervalHistory) a.Intervals.Dequeue();
         a.Last = time;
+
+        if (options.App is not null && gapMs < threshold) a.Window.Add(gapMs); // freezes are reported separately
+        if (time - a.WindowStart >= options.StutterWindow)
+        {
+            CheckStutter(pid, a, time);
+            a.Window.Clear();
+            a.WindowStart = time;
+        }
+    }
+
+    void CheckStutter(int pid, App a, DateTime now)
+    {
+        if (a.Window.Count < 100 || now - a.LastStutterReport < options.StutterCooldown) return;
+        var sorted = a.Window.Order().ToList();
+        var median = sorted[sorted.Count / 2];
+        if (median > options.SteadyIntervalMs) return;
+        var lateLimit = Math.Max(2 * median, median + 16);
+        var late = a.Window.Count(x => x > lateLimit);
+        var share = late / (double)a.Window.Count;
+        if (share < options.StutterShare) return;
+
+        a.LastStutterReport = now;
+        var fps = a.Window.Count / a.Window.Sum() * 1000;
+        FindingRaised?.Invoke(new Finding(now, FindingKind.FrameStutter,
+            $"{a.Name} (pid {pid}) is stuttering: {late} of {a.Window.Count} frames ({share:P0}) in the last " +
+            $"{options.StutterWindow.TotalSeconds:F0} s took over {lateLimit:F0} ms while a normal frame takes {median:F1} ms " +
+            $"(about {fps:F0} fps). You feel this as uneven, jerky motion.",
+            [$"worst frame {sorted[^1]:F0} ms, 99th percentile {sorted[(int)(sorted.Count * 0.99)]:F0} ms"]));
     }
 
     bool IsSteady(App a)
@@ -89,7 +129,9 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         return sorted[sorted.Count / 2] <= options.SteadyIntervalMs;
     }
 
-    static double Fps(App a) => 1000 / a.Intervals.Order().ElementAt(a.Intervals.Count / 2);
+    // Average rate, not 1/median: apps that present in bursts (two quick frames, then a pause) have a misleadingly
+    // small median interval.
+    static double Fps(App a) => a.Intervals.Count / a.Intervals.Sum() * 1000;
 
     Finding Freeze(int pid, string name, double fps, DateTime from, DateTime to, double gapMs)
     {

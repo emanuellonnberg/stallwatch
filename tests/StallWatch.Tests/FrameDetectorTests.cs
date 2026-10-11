@@ -88,3 +88,43 @@ public class FrameDetectorTests
         Assert.Contains(f.Evidence, e => e.Contains("Code.exe"));
     }
 }
+
+public class FrameStutterTests
+{
+    static readonly DateTime T0 = new(2026, 10, 11, 12, 0, 0, DateTimeKind.Local);
+
+    static List<Finding> Run(Func<int, double> intervalMs, double seconds)
+    {
+        var det = new FrameDetector(new FrameDetectorOptions { App = "game.exe" });
+        var findings = new List<Finding>();
+        det.FindingRaised += findings.Add;
+        var t = 0.0;
+        for (var i = 0; t < seconds * 1000; i++)
+        {
+            det.Present(1, "game.exe", T0.AddMilliseconds(t));
+            t += intervalMs(i);
+        }
+        return findings;
+    }
+
+    [Fact]
+    public void Even_frames_are_not_stutter()
+    {
+        Assert.Empty(Run(_ => 8.33, 30));
+    }
+
+    [Fact]
+    public void Every_tenth_frame_late_is_reported_as_stutter_not_freeze()
+    {
+        var findings = Run(i => i % 10 == 9 ? 45 : 8.33, 30);
+        Assert.Contains(findings, f => f.Kind == FindingKind.FrameStutter && f.Summary.Contains("game.exe"));
+        Assert.DoesNotContain(findings, f => f.Kind == FindingKind.FrameFreeze);
+    }
+
+    [Fact]
+    public void Stutter_is_rate_limited()
+    {
+        var findings = Run(i => i % 10 == 9 ? 45 : 8.33, 50);
+        Assert.Single(findings, f => f.Kind == FindingKind.FrameStutter);
+    }
+}

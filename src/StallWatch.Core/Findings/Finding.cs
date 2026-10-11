@@ -6,6 +6,7 @@ public enum FindingKind
     FlushStorm,
     ResourceLeak,
     FrameFreeze,
+    FrameStutter,
     InputDelay,
 }
 
