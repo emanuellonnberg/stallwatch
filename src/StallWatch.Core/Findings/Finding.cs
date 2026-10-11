@@ -8,6 +8,7 @@ public enum FindingKind
     FrameFreeze,
     FrameStutter,
     InputDelay,
+    AccessibilityClient,
 }
 
 /// <summary>Something the user should know about, phrased for humans. Evidence holds supporting lines.</summary>

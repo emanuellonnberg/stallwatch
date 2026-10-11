@@ -7,9 +7,11 @@
     <Project Path="tests/StallWatch.Tests/StallWatch.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/a11yclient/a11yclient.csproj" />
     <Project Path="tools/flushstorm/flushstorm.csproj" />
     <Project Path="tools/framestall/framestall.csproj" />
     <Project Path="tools/inputprobe/inputprobe.csproj" />
     <Project Path="tools/slowhook/slowhook.csproj" />
+    <Project Path="tools/wineventprobe/wineventprobe.csproj" />
   </Folder>
 </Solution>

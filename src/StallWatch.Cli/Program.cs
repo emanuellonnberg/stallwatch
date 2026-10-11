@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using StallWatch.Core.Accessibility;
 using StallWatch.Core.Disk;
 using StallWatch.Core.Etw;
 using StallWatch.Core.Findings;
@@ -23,6 +24,8 @@ static class Program
                                                      --log writes every event delayed 50 ms or more
           stallwatch leaks [--minutes N]             handle/thread/memory leaks (no admin needed;
                                                      growth needs at least 10 minutes of watching)
+          stallwatch a11y [--seconds N]              which programs read other windows' UI (accessibility
+                                                     clients that make VS Code/Edge/Teams stall input) (admin)
 
           --app     report frame freezes only for this program (e.g. DTS.exe); without it, any app that
                     was rendering steadily and stopped for 250 ms or more is reported
@@ -43,6 +46,7 @@ static class Program
                 "record" when args.Length > 1 => Record(args[1], IntArg(args, "--seconds") ?? 60),
                 "leaks" => Leaks(IntArg(args, "--minutes") ?? 0),
                 "input" => Input(IntArg(args, "--minutes"), StringArg(args, "--log")),
+                "a11y" => Accessibility(IntArg(args, "--seconds") ?? 30),
                 _ => Fail(Usage),
             };
         }
@@ -158,6 +162,38 @@ static class Program
                 else Console.WriteLine(line);
             }
         }
+        return 0;
+    }
+
+    static int Accessibility(int seconds)
+    {
+        var admin = IsAdmin();
+        if (!admin) Console.WriteLine("Not elevated: counting requests only. Run as administrator to see which programs send them.");
+        var gate = new object();
+        var attributor = new AccessRequestAttributor();
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+        Console.WriteLine($"Showing a small probe window for {seconds} s (bottom right) and recording who reads its UI. Leave it alone.");
+        var debug = Environment.GetEnvironmentVariable("STALLWATCH_DEBUG_READY") is { Length: > 0 };
+        using var probe = new AccessibilityClientProbe(r =>
+        {
+            if (debug) Console.WriteLine($"request {r.Time:HH:mm:ss.ffff} {r.Api}");
+            lock (gate) attributor.Request(r);
+        });
+        var etw = !admin ? Task.CompletedTask : Task.Run(() => EtwReadyThreadSource.RunLive(probe.ThreadId,
+            (t, pid, name) => { if (pid != Environment.ProcessId) lock (gate) attributor.Ready(t, pid, name); }, cts.Token));
+        cts.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(seconds));
+        Thread.Sleep(1500); // let ETW buffers deliver the last ready events
+        cts.Cancel();
+        etw.Wait(TimeSpan.FromSeconds(5));
+
+        IReadOnlyList<AccessRequestAttributor.Client> clients;
+        lock (gate) clients = attributor.Finish();
+        PrintFinding(AccessRequestAttributor.ToFinding(DateTime.Now, clients, TimeSpan.FromSeconds(seconds)));
+        Console.WriteLine($"({attributor.Requests} requests, {attributor.Unattributed} without a known sender; " +
+                          $"probe thread {probe.ThreadId}, {EtwReadyThreadSource.TotalReadyEvents:N0} scheduler events seen)");
+        if (etw.IsFaulted) Console.WriteLine("Kernel trace failed: " + etw.Exception!.GetBaseException().Message);
         return 0;
     }
 
