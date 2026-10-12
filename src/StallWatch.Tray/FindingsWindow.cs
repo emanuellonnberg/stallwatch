@@ -18,6 +18,7 @@ sealed class FindingsWindow : Form
     readonly Label _summary = new() { AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(4, 8, 16, 4) };
     readonly ComboBox _range = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
     readonly ComboBox _kind = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    readonly CheckBox _showHidden = new() { Text = "Show hidden", AutoSize = true, Margin = new Padding(12, 7, 4, 4) };
     readonly ListView _timeline = NewList();
     readonly ListView _programs = NewList();
     readonly TextBox _details = new()
@@ -57,11 +58,14 @@ sealed class FindingsWindow : Form
         _kind.SelectedIndex = 0;
         _range.SelectedIndexChanged += (_, _) => Reload();
         _kind.SelectedIndexChanged += (_, _) => Reload();
+        _showHidden.CheckedChanged += (_, _) => Reload();
+        _timeline.ContextMenuStrip = HideMenu(() => _timeline.SelectedItems.Count > 0 && _timeline.SelectedItems[0].Tag is List<Finding> g ? g[0].Process : null);
+        _programs.ContextMenuStrip = HideMenu(() => _programs.SelectedItems.Count > 0 ? _programs.SelectedItems[0].Text : null);
 
         var export = new Button { Text = "Export HTML…", AutoSize = true };
         export.Click += (_, _) => ExportHtml();
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 6, 8, 6), WrapContents = false };
-        bar.Controls.AddRange([_summary, _range, _kind, export]);
+        bar.Controls.AddRange([_summary, _range, _kind, export, _showHidden]);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterWidth = 6 };
         split.Panel1.Controls.Add(_timeline);
@@ -96,6 +100,28 @@ sealed class FindingsWindow : Form
         BorderStyle = BorderStyle.None, MultiSelect = false,
     };
 
+    // Right-click: hide or show again the findings about the selected row's program.
+    ContextMenuStrip HideMenu(Func<string?> selectedProgram)
+    {
+        var menu = new ContextMenuStrip();
+        var item = new ToolStripMenuItem();
+        menu.Items.Add(item);
+        menu.Opening += (_, e) =>
+        {
+            if (selectedProgram() is not { } program) { e.Cancel = true; return; }
+            var hidden = _store.HiddenPrograms().Contains(program);
+            item.Text = hidden ? $"Show findings from {program} again" : $"Hide findings from {program}";
+            item.Tag = (program, !hidden);
+        };
+        item.Click += (_, _) =>
+        {
+            if (item.Tag is not (string program, bool hide)) return;
+            _store.SetHidden(program, hide);
+            Reload();
+        };
+        return menu;
+    }
+
     int Days => Ranges[Math.Max(0, _range.SelectedIndex)].Days;
     FindingKind? KindFilter => _kind.SelectedIndex <= 0 ? null : Enum.GetValues<FindingKind>()[_kind.SelectedIndex - 1];
 
@@ -106,9 +132,15 @@ sealed class FindingsWindow : Form
         var from = to.AddDays(-Days);
         var all = _store.Findings(from, to);
         var watched = HtmlReport.Watched(_store.Sessions(from, to), from, to);
-        var findings = KindFilter is { } k ? all.Where(f => f.Kind == k).ToList() : all;
+        var hiddenPrograms = _store.HiddenPrograms();
+        bool IsHidden(Finding f) => f.Process is not null && hiddenPrograms.Contains(f.Process);
+        var ofKind = KindFilter is { } k ? all.Where(f => f.Kind == k).ToList() : all;
+        var hiddenCount = ofKind.Count(IsHidden);
+        var findings = _showHidden.Checked ? ofKind : ofKind.Where(f => !IsHidden(f)).ToList();
 
-        _summary.Text = $"{Hours(watched)} watched · {findings.Count:N0} finding{(findings.Count == 1 ? "" : "s")}";
+        var visible = ofKind.Count - hiddenCount;
+        _summary.Text = $"{Hours(watched)} watched · {visible:N0} finding{(visible == 1 ? "" : "s")}" +
+                        (hiddenCount > 0 ? $" · {hiddenCount:N0} hidden ({hiddenPrograms.Count} program{(hiddenPrograms.Count == 1 ? "" : "s")})" : "");
         var selectedKey = _timeline.SelectedItems.Count > 0 ? (string?)_timeline.SelectedItems[0].Name : null;
 
         _timeline.BeginUpdate();
@@ -129,6 +161,7 @@ sealed class FindingsWindow : Form
             var item = new ListViewItem([when, HtmlReport.Label(f.Kind), g.Count == 1 ? "" : g.Count.ToString(Inv), f.Process ?? "", f.Summary], f.Kind.ToString())
             {
                 Group = lvGroup, Tag = g, Name = $"{day:yyyyMMdd}|{f.Kind}|{f.Process}",
+                ForeColor = IsHidden(f) ? SystemColors.GrayText : SystemColors.WindowText,
             };
             _timeline.Items.Add(item);
         }
@@ -141,7 +174,7 @@ sealed class FindingsWindow : Form
         if (selectedKey is not null && _timeline.Items.IndexOfKey(selectedKey) is var i and >= 0) _timeline.Items[i].Selected = true;
         else if (_timeline.Items.Count > 0 && _timeline.Items[0].Tag is not null) _timeline.Items[0].Selected = true;
         ShowDetails();
-        FillPrograms(findings);
+        FillPrograms(findings, hiddenPrograms);
     }
 
     void ShowDetails()
@@ -158,7 +191,7 @@ sealed class FindingsWindow : Form
         _details.Text = string.Join(Environment.NewLine, lines);
     }
 
-    void FillPrograms(List<Finding> findings)
+    void FillPrograms(List<Finding> findings, HashSet<string> hidden)
     {
         _programs.BeginUpdate();
         _programs.Items.Clear();
@@ -167,7 +200,10 @@ sealed class FindingsWindow : Form
                      .OrderByDescending(g => g.Count()))
         {
             var what = string.Join(", ", g.GroupBy(f => f.Kind).OrderByDescending(x => x.Count()).Select(x => $"{HtmlReport.Label(x.Key)} ×{x.Count()}"));
-            _programs.Items.Add(new ListViewItem([g.Key, g.Count().ToString(Inv), what, g.Max(f => f.Time).ToString("yyyy-MM-dd HH:mm", Inv)]));
+            _programs.Items.Add(new ListViewItem([g.Key, g.Count().ToString(Inv), what, g.Max(f => f.Time).ToString("yyyy-MM-dd HH:mm", Inv)])
+            {
+                ForeColor = hidden.Contains(g.Key) ? SystemColors.GrayText : SystemColors.WindowText,
+            });
         }
         _programs.EndUpdate();
     }

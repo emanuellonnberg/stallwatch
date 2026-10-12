@@ -106,6 +106,7 @@ sealed class TrayApp : ApplicationContext
             _lastFinding = DateTime.Now;
             UpdateStatus();
             if (_window is not null) { _store?.Flush(); _window.Reload(); }
+            if (f.Process is not null && _store is not null && _store.HiddenPrograms().Contains(f.Process)) return;
             if (!_throttle.Allow(f)) return;
             _icon.ShowBalloonTip(10_000, $"StallWatch: {HtmlReport.Label(f.Kind)}", Shorten(f.Summary, 250),
                 f.Kind is FindingKind.ResourceLeak or FindingKind.AccessibilityClient ? ToolTipIcon.Info : ToolTipIcon.Warning);

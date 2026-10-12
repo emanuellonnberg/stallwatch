@@ -52,6 +52,8 @@ public sealed class FindingStore : IDisposable
                 start TEXT NOT NULL,
                 end TEXT NOT NULL,
                 command TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS hidden(
+                process TEXT PRIMARY KEY COLLATE NOCASE);
             """);
         if (flushInterval is { } every) _timer = new System.Threading.Timer(_ => Flush(), null, every, every);
     }
@@ -125,6 +127,31 @@ public sealed class FindingStore : IDisposable
                     JsonSerializer.Deserialize<List<string>>(r.GetString(4)) ?? [], r.IsDBNull(2) ? null : r.GetString(2)));
             }
             return list;
+        }
+    }
+
+    /// <summary>Programs the user chose not to see findings about (still recorded, just not shown or alerted).</summary>
+    public HashSet<string> HiddenPrograms()
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "SELECT process FROM hidden";
+            using var r = cmd.ExecuteReader();
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (r.Read()) set.Add(r.GetString(0));
+            return set;
+        }
+    }
+
+    public void SetHidden(string process, bool hidden)
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = hidden ? "INSERT OR IGNORE INTO hidden(process) VALUES($p)" : "DELETE FROM hidden WHERE process = $p";
+            cmd.Parameters.AddWithValue("$p", process);
+            cmd.ExecuteNonQuery();
         }
     }
 

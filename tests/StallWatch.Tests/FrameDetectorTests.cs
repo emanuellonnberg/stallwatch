@@ -88,6 +88,28 @@ public class FrameDetectorTests
     }
 
     [Fact]
+    public void Bursty_app_pausing_is_not_a_freeze()
+    {
+        // A terminal while text scrolls: 1.5 s bursts at 60 fps with 400 ms pauses between them.
+        var (det, findings) = Make();
+        var t = 0.0;
+        for (var burst = 0; burst < 10; burst++)
+        {
+            t = Present(det, t, 1.5, fps: 60, pid: 9, name: "WindowsTerminal.exe") + 0.4;
+        }
+        Assert.Empty(findings);
+    }
+
+    [Fact]
+    public void Bursty_app_is_still_watched_with_an_app_filter()
+    {
+        var (det, findings) = Make(app: "WindowsTerminal.exe");
+        var last = Present(det, 0, 1.5, fps: 60, pid: 9, name: "WindowsTerminal.exe");
+        Present(det, last + 0.4, 1.5, fps: 60, pid: 9, name: "WindowsTerminal.exe");
+        Assert.Single(findings);
+    }
+
+    [Fact]
     public void Freeze_includes_disk_evidence_from_the_same_moment()
     {
         var disk = new DiskDetector(new DiskDetectorOptions()) { DiskName = d => d == 4 ? "C: (Samsung SSD 980 PRO 2TB)" : $"disk {d}" };

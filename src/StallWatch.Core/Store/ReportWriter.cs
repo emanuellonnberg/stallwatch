@@ -10,7 +10,9 @@ public static class ReportWriter
         var to = DateTime.Today.AddDays(1);
         var from = to.AddDays(-Math.Max(1, days));
         path ??= DefaultPath;
-        File.WriteAllText(path, HtmlReport.Render(store.Findings(from, to), store.Sessions(from, to), from, to, DateTime.Now));
+        var hidden = store.HiddenPrograms();
+        var findings = store.Findings(from, to).Where(f => f.Process is null || !hidden.Contains(f.Process)).ToList();
+        File.WriteAllText(path, HtmlReport.Render(findings, store.Sessions(from, to), from, to, DateTime.Now));
         return path;
     }
 }

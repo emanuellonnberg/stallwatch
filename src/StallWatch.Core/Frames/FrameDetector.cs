@@ -43,6 +43,14 @@ public sealed class FrameDetectorOptions
     /// this frame rate over the whole window: games do, a browser that renders only while scrolling does not.</summary>
     public double StutterMinFpsAnyApp { get; init; } = 30;
 
+    /// <summary>Without an app filter, a freeze counts only after the app rendered without a break (no frame gap
+    /// over <see cref="RunGapMs"/>) for this long. Apps that draw in short bursts (a terminal while text scrolls, a
+    /// remote-desktop viewer while the remote screen changes) pause all the time without being frozen.</summary>
+    public TimeSpan SteadyRunAnyApp { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>A gap longer than this ends a steady run (50 ms = below 20 fps).</summary>
+    public double RunGapMs { get; init; } = 50;
+
     /// <summary>What else happened during a freeze or stutter window: (pid, name, from, to) → causes. Optional.</summary>
     public Func<int, string, DateTime, DateTime, Causes.CauseReport?>? Explain { get; init; }
 }
@@ -60,6 +68,7 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
     {
         public required string Name;
         public DateTime Last;
+        public DateTime RunStart; // start of the current stretch of rendering without a break
         public readonly Queue<double> Intervals = new();
         public DateTime WindowStart;
         public readonly List<double> Window = [];
@@ -86,7 +95,7 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
 
         if (!_apps.TryGetValue(pid, out var a) || !string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
         {
-            _apps[pid] = new App { Name = name, Last = time, WindowStart = time };
+            _apps[pid] = new App { Name = name, Last = time, RunStart = time, WindowStart = time };
             return;
         }
 
@@ -94,7 +103,8 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         if (gapMs < 0) return; // out-of-order delivery; ignore
         var threshold = options.App is null ? options.FreezeMsAnyApp : options.FreezeMs;
 
-        if (gapMs >= threshold && gapMs <= options.MaxFreezeMs && IsSteady(a) &&
+        var steadyRun = options.App is not null || a.Last - a.RunStart >= options.SteadyRunAnyApp;
+        if (gapMs >= threshold && gapMs <= options.MaxFreezeMs && IsSteady(a) && steadyRun &&
             (options.App is not null || options.IsForeground?.Invoke(pid) != false))
         {
             var (from, fps) = (a.Last, Fps(a));
@@ -106,6 +116,7 @@ public sealed class FrameDetector(FrameDetectorOptions options, DiskDetector? di
         a.Intervals.Enqueue(gapMs);
         if (a.Intervals.Count > IntervalHistory) a.Intervals.Dequeue();
         a.Last = time;
+        if (gapMs > options.RunGapMs) a.RunStart = time;
 
         var watchStutter = options.App is not null || options.IsForeground is not null;
         if (watchStutter && gapMs < threshold) a.Window.Add(gapMs); // freezes are reported separately
