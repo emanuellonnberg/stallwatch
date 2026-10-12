@@ -39,6 +39,7 @@ Positive controls:
 - `tools/slowhook [delayMs] [everyNth] [seconds]` installs a slow low-level mouse/keyboard hook (input delay).
 - `tools/a11yclient [seconds]` reads the UI of every window that raises focus events (an accessibility client).
 - `tools/wineventprobe [count]` times `NotifyWinEvent`, i.e. what WinEvent listeners cost every UI app.
+- `tools/flushlatency <folder> [seconds] [perSecond]` times write + flush on a drive; run it on several drives to tell a drive that stalls on flushes from one that is merely busy.
 - `tools/inputprobe` installs its own hooks: a spike tool, never a measurement.
 
 ## License
